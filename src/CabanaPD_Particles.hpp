@@ -1,5 +1,5 @@
 /****************************************************************************
- * Copyright (c) 2022 by Oak Ridge National Laboratory                      *
+ * Copyright (c) 2022-2023 by Oak Ridge National Laboratory                 *
  * All rights reserved.                                                     *
  *                                                                          *
  * This file is part of CabanaPD. CabanaPD is distributed under a           *
@@ -78,7 +78,7 @@ namespace CabanaPD
 
 // FIXME: this should use MemorySpace directly, but DeviceType enables the
 // friend class with Comm (which only uses DeviceType because Cabana::Halo
-// currently does)
+// currently does).
 template <class DeviceType, class ModelType, int Dimension = 3>
 class Particles;
 
@@ -91,36 +91,39 @@ class Particles<DeviceType, PMB, Dimension>
     using memory_space = typename device_type::memory_space;
     static constexpr int dim = Dimension;
 
-    // Per particle
+    // Per particle.
     unsigned long long int n_global = 0;
     std::size_t n_local = 0;
     std::size_t n_ghost = 0;
     std::size_t size = 0;
 
-    // x, u, f (vector matching system dimension)
+    // x, u, f (vector matching system dimension).
     using vector_type = Cabana::MemberTypes<double[dim]>;
-    // volume, dilatation, weighted_volume
+    // volume, dilatation, weighted_volume.
     using scalar_type = Cabana::MemberTypes<double>;
-    // type, W, v, rho, damage
+    // no-fail.
+    using int_type = Cabana::MemberTypes<int>;
+    // type, W, v, rho, damage.
     using other_types =
         Cabana::MemberTypes<int, double, double[dim], double, double>;
-    // Potentially needed later: body force (b), ID
+    // Potentially needed later: body force (b), ID.
 
-    // FIXME: add vector length
-    // FIXME: enable variable aosoa
+    // FIXME: add vector length.
+    // FIXME: enable variable aosoa.
     using aosoa_x_type = Cabana::AoSoA<vector_type, memory_space, 1>;
     using aosoa_u_type = Cabana::AoSoA<vector_type, memory_space, 1>;
     using aosoa_f_type = Cabana::AoSoA<vector_type, memory_space, 1>;
     using aosoa_vol_type = Cabana::AoSoA<scalar_type, memory_space, 1>;
+    using aosoa_nofail_type = Cabana::AoSoA<int_type, memory_space, 1>;
     using aosoa_other_type = Cabana::AoSoA<other_types, memory_space>;
 
-    // Per type
+    // Per type.
     int n_types = 1;
 
-    // Simulation total domain
+    // Simulation total domain.
     std::array<double, 3> global_mesh_ext;
 
-    // Simulation sub domain (single MPI rank)
+    // Simulation sub domain (single MPI rank).
     std::array<double, 3> local_mesh_ext;
     std::array<double, 3> local_mesh_lo;
     std::array<double, 3> local_mesh_hi;
@@ -131,7 +134,6 @@ class Particles<DeviceType, PMB, Dimension>
     double dy;
     double dz;
 
-    std::vector<int> halo_neighbors;
     int halo_width;
 
     // Default constructor.
@@ -177,7 +179,7 @@ class Particles<DeviceType, PMB, Dimension>
         auto global_grid = Cajita::createGlobalGrid(
             MPI_COMM_WORLD, global_mesh, is_periodic, partitioner );
 
-        // Create a local mesh
+        // Create a local mesh.
         local_grid = Cajita::createLocalGrid( global_grid, halo_width );
         auto local_mesh = Cajita::createLocalMesh<device_type>( *local_grid );
 
@@ -195,9 +197,6 @@ class Particles<DeviceType, PMB, Dimension>
         dx = local_mesh.measure( Cajita::Edge<Cajita::Dim::I>(), zero );
         dy = local_mesh.measure( Cajita::Edge<Cajita::Dim::J>(), zero );
         dz = local_mesh.measure( Cajita::Edge<Cajita::Dim::K>(), zero );
-
-        // FIXME: remove Impl
-        halo_neighbors = Cajita::Impl::getTopology( *local_grid );
     }
 
     template <class ExecSpace>
@@ -219,6 +218,7 @@ class Particles<DeviceType, PMB, Dimension>
         auto rho = slice_rho();
         auto u = slice_u();
         auto vol = slice_vol();
+        auto nofail = slice_nofail();
 
         auto created = Kokkos::View<bool*, memory_space>(
             Kokkos::ViewAllocateWithoutInitializing( "particle_created" ),
@@ -254,8 +254,9 @@ class Particles<DeviceType, PMB, Dimension>
                     v( pid, d ) = 0.0;
                     f( pid, d ) = 0.0;
                 }
-                // FIXME: hardcoded
+                // FIXME: hardcoded.
                 type( pid ) = 0;
+                nofail( pid ) = 0;
                 rho( pid ) = 1.0;
 
                 // Get the volume of the cell.
@@ -311,10 +312,35 @@ class Particles<DeviceType, PMB, Dimension>
     auto slice_vol() { return Cabana::slice<0>( _aosoa_vol, "volume" ); }
     auto slice_vol() const { return Cabana::slice<0>( _aosoa_vol, "volume" ); }
     auto slice_type() { return Cabana::slice<0>( _aosoa_other, "type" ); }
+    auto slice_type() const { return Cabana::slice<0>( _aosoa_other, "type" ); }
     auto slice_W() { return Cabana::slice<1>( _aosoa_other, "strain_energy" ); }
+    auto slice_W() const
+    {
+        return Cabana::slice<1>( _aosoa_other, "strain_energy" );
+    }
     auto slice_v() { return Cabana::slice<2>( _aosoa_other, "velocities" ); }
+    auto slice_v() const
+    {
+        return Cabana::slice<2>( _aosoa_other, "velocities" );
+    }
     auto slice_rho() { return Cabana::slice<3>( _aosoa_other, "density" ); }
+    auto slice_rho() const
+    {
+        return Cabana::slice<3>( _aosoa_other, "density" );
+    }
     auto slice_phi() { return Cabana::slice<4>( _aosoa_other, "damage" ); }
+    auto slice_phi() const
+    {
+        return Cabana::slice<4>( _aosoa_other, "damage" );
+    }
+    auto slice_nofail()
+    {
+        return Cabana::slice<0>( _aosoa_nofail, "no_fail_region" );
+    }
+    auto slice_nofail() const
+    {
+        return Cabana::slice<0>( _aosoa_nofail, "no_fail_region" );
+    }
 
     void resize( int new_local, int new_ghost )
     {
@@ -326,6 +352,7 @@ class Particles<DeviceType, PMB, Dimension>
         _aosoa_vol.resize( new_local + new_ghost );
         _aosoa_f.resize( new_local );
         _aosoa_other.resize( new_local );
+        _aosoa_nofail.resize( new_local + new_ghost );
         size = _aosoa_x.size();
     };
 
@@ -356,6 +383,7 @@ class Particles<DeviceType, PMB, Dimension>
     aosoa_u_type _aosoa_u;
     aosoa_f_type _aosoa_f;
     aosoa_vol_type _aosoa_vol;
+    aosoa_nofail_type _aosoa_nofail;
     aosoa_other_type _aosoa_other;
 
 #ifdef Cabana_ENABLE_HDF5
@@ -374,7 +402,7 @@ class Particles<DeviceType, LPS, Dimension>
     using memory_space = typename base_type::memory_space;
     using base_type::dim;
 
-    // Per particle
+    // Per particle.
     using base_type::n_ghost;
     using base_type::n_global;
     using base_type::n_local;
@@ -386,13 +414,13 @@ class Particles<DeviceType, LPS, Dimension>
     using aosoa_theta_type = Cabana::AoSoA<scalar_type, memory_space, 1>;
     using aosoa_m_type = Cabana::AoSoA<scalar_type, memory_space, 1>;
 
-    // Per type
+    // Per type.
     using base_type::n_types;
 
-    // Simulation total domain
+    // Simulation total domain.
     using base_type::global_mesh_ext;
 
-    // Simulation sub domain (single MPI rank)
+    // Simulation sub domain (single MPI rank).
     using base_type::ghost_mesh_hi;
     using base_type::ghost_mesh_lo;
     using base_type::local_mesh_ext;
@@ -404,7 +432,6 @@ class Particles<DeviceType, LPS, Dimension>
     using base_type::dz;
     using base_type::local_grid;
 
-    using base_type::halo_neighbors;
     using base_type::halo_width;
 
     // Default constructor.
@@ -412,7 +439,7 @@ class Particles<DeviceType, LPS, Dimension>
         : base_type()
     {
         _aosoa_m = aosoa_m_type( "Particle Weighted Volumes", 0 );
-        _aosoa_theta = aosoa_theta_type( "Particle Dilatationss", 0 );
+        _aosoa_theta = aosoa_theta_type( "Particle Dilatations", 0 );
     }
 
     // Constructor which initializes particles on regular grid.
@@ -424,7 +451,7 @@ class Particles<DeviceType, LPS, Dimension>
                      max_halo_width )
     {
         _aosoa_m = aosoa_m_type( "Particle Weighted Volumes", n_local );
-        _aosoa_theta = aosoa_theta_type( "Particle Dilatationss", n_local );
+        _aosoa_theta = aosoa_theta_type( "Particle Dilatations", n_local );
         init_lps();
     }
 

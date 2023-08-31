@@ -1,5 +1,5 @@
 /****************************************************************************
- * Copyright (c) 2022 by Oak Ridge National Laboratory                      *
+ * Copyright (c) 2022-2023 by Oak Ridge National Laboratory                 *
  * All rights reserved.                                                     *
  *                                                                          *
  * This file is part of CabanaPD. CabanaPD is distributed under a           *
@@ -20,7 +20,6 @@
 
 int main( int argc, char* argv[] )
 {
-
     MPI_Init( &argc, &argv );
 
     {
@@ -107,9 +106,10 @@ int main( int argc, char* argv[] )
         CabanaPD::RegionBoundary plane(
             x_bc - dx, x_bc + dx * 1.25, y_prenotch1 - dx * 0.25,
             y_prenotch2 + dx * 0.25, -thickness, thickness );
-
-        auto bc = createBoundaryCondition( exec_space{}, *particles, plane,
-                                           CabanaPD::ForceBCTag{} );
+        std::vector<CabanaPD::RegionBoundary> planes = { plane };
+        auto bc =
+            createBoundaryCondition( CabanaPD::ForceValueBCTag{}, exec_space{},
+                                     *particles, planes, 0.0 );
 
         auto init_functor = KOKKOS_LAMBDA( const int pid )
         {
